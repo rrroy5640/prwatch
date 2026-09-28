@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  ciEvent, conflictEvent, groupNotices, markDone, needsDetail, reconcile, toEvents, view,
+  ciEvent, conflictEvent, groupNotices, markDone, needsDetail, reconcile, setWorking, toEvents, view,
   type Detail, type Event, type Item, type RawItem, type State,
 } from '../src/events.ts'
 
@@ -166,4 +166,19 @@ test('conflict fires once per transition into CONFLICTING, UNKNOWN keeps last va
   assert.equal(state.tracked.PR1!.item.mergeable, 'CONFLICTING')
   const again = reconcile(state, [item({ mergeable: 'CONFLICTING' })], new Map(), '4', true)
   assert.equal(again.state.tracked.PR1!.events.filter(e => e.kind === 'conflict').length, 1)
+})
+
+test('working flag survives polls, can be cleared, and Done clears it', () => {
+  const { state } = reconcile(empty, [item()], new Map([['PR1', { item: item(), events: [ev('2')] }]]), 'n', false)
+  const working = setWorking(state, 'PR1', true, 'w1')
+  assert.equal(view(working)[0]!.working, 'w1')
+  assert.equal(setWorking(state, 'nope', true, 'w1'), state)
+  const changed = item({ updatedAt: 't2' })
+  const polled = reconcile(working, [changed], new Map([['PR1', { item: changed, events: [ev('2'), ev('3')] }]]), 'n', true).state
+  assert.equal(view(polled)[0]!.working, 'w1')
+  assert.equal(view(setWorking(polled, 'PR1', false, 'x'))[0]!.working, null)
+  // Done with nothing unread shown (upTo '') still clears the flag and keeps events unread
+  const done = view(markDone(polled, 'PR1', ''))[0]!
+  assert.equal(done.working, null)
+  assert.equal(done.unreadCount, 2)
 })

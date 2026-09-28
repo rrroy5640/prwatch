@@ -22,7 +22,8 @@ export type Item = {
   updatedAt: string
 }
 
-export type Tracked = { item: Item; events: Event[]; watermark: string; notifiedUpTo: string }
+// working: when you flagged it as in progress (cleared by Done)
+export type Tracked = { item: Item; events: Event[]; watermark: string; notifiedUpTo: string; working?: string }
 export type State = { me: string; tracked: Record<string, Tracked> }
 export type Detail = { item: Item; events: Event[] }
 export type Notice = { group: string; title: string; message: string; url: string }
@@ -196,7 +197,7 @@ export function reconcile(
       if (notify) notices.push(noticeFor(item, events.at(-1)!))
       notifiedUpTo = top
     }
-    tracked[id] = { item, events, watermark, notifiedUpTo }
+    tracked[id] = { ...t, item, events, watermark, notifiedUpTo }
   }
   return { state: { ...state, tracked }, notices }
 }
@@ -219,10 +220,19 @@ export function markDone(state: State, id: string, upTo: string): State {
   const { [id]: _, ...rest } = state.tracked
   if (t.item.state !== 'OPEN' && upTo >= newest(t.events)) return { ...state, tracked: rest }
   const watermark = upTo > t.watermark ? upTo : t.watermark
-  return { ...state, tracked: { ...rest, [id]: { ...t, watermark } } }
+  const { working: _w, ...kept } = t
+  return { ...state, tracked: { ...rest, [id]: { ...kept, watermark } } }
 }
 
-export type ViewItem = Item & { unread: boolean; unreadCount: number; latest: string; unreadEvents: Event[] }
+/** Flag an item as being worked on (or not), so the board keeps it in front until you mark it done. */
+export function setWorking(state: State, id: string, on: boolean, now: string): State {
+  const t = state.tracked[id]
+  if (!t) return state
+  const { working: _, ...kept } = t
+  return { ...state, tracked: { ...state.tracked, [id]: on ? { ...kept, working: t.working ?? now } : kept } }
+}
+
+export type ViewItem = Item & { unread: boolean; unreadCount: number; latest: string; unreadEvents: Event[]; working: string | null }
 
 export function view(state: State): ViewItem[] {
   return Object.values(state.tracked)
@@ -234,6 +244,7 @@ export function view(state: State): ViewItem[] {
         unreadCount: unreadEvents.length,
         latest: newest(t.events) || t.item.updatedAt,
         unreadEvents,
+        working: t.working ?? null,
       }
     })
     .sort((a, b) => Number(b.unread) - Number(a.unread) || b.latest.localeCompare(a.latest))

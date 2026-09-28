@@ -174,6 +174,12 @@ main { padding: 32px 32px 64px; }
 .show-comments:hover { color: var(--accent); text-decoration: underline; }
 .done { margin-left: auto; flex-shrink: 0; }
 .done:hover { background: var(--green); color: var(--on-accent); }
+/* in progress: amber frame + Done lit up, as the reminder to close it out */
+.card.working { border-color: var(--amber); box-shadow: 4px 4px 0 var(--amber); }
+.card.working:hover { box-shadow: 6px 6px 0 var(--amber); }
+.board.list .card.working { box-shadow: inset 4px 0 0 var(--amber); }
+.work[aria-pressed="true"] { background: var(--amber); color: var(--on-accent); }
+.card.working .done { background: var(--accent); color: var(--on-accent); }
 
 /* comments dialog */
 dialog.comments-dialog {
@@ -291,8 +297,9 @@ function ago(t) {
 
 // --- derive what a card says ---
 function column(i) {
-  if (i.type === 'Issue') return i.unread ? 'issue-new' : 'issue-read'
-  if (i.unread) return 'action'
+  // working stays in "Needs you" until Done, so it can't slip out of sight
+  if (i.type === 'Issue') return i.unread || i.working ? 'issue-new' : 'issue-read'
+  if (i.unread || i.working) return 'action'
   if (i.type === 'PR' && i.state === 'OPEN' && i.author === snap.me && i.review !== 'APPROVED') return 'waiting'
   return 'handled'
 }
@@ -367,14 +374,15 @@ function openComments(i) {
 
 function card(i) {
   const sig = i.unread ? topSignal(i) : { rank: 0 }
-  const el = h('article', { class: `card ${sig.tone === 'red' ? 'tone-red' : ''}`, 'data-id': i.id },
+  const tone = i.working ? 'working' : sig.tone === 'red' ? 'tone-red' : ''
+  const el = h('article', { class: `card ${tone}`, 'data-id': i.id },
     h('div', { class: 'top' },
       h('span', {}, `${i.repo.split('/')[1]} #${i.number}`),
       i.ci ? h('span', { class: `ci ${i.ci}`, title: `CI ${i.ci.toLowerCase()}` }, 'CI') : null,
       h('span', { class: 'when' }, ago(i.latest))),
     h('a', { class: 'title', href: i.url, target: '_blank', rel: 'noopener', title: i.title }, i.title))
 
-  if (!i.unread) {
+  if (!i.unread && !i.working) {
     const tags = tagsOf(i)
     if (tags.length) el.append(h('div', { class: 'tags' }, tags.map(([label, tone]) => h('span', { class: `tag ${tone}` }, label))))
     return el
@@ -386,17 +394,24 @@ function card(i) {
       h('b', {}, a.login), h('span', {}, a.summary)))))
   }
   if (sig.rank > 0) el.append(h('div', {}, h('span', { class: `signal ${sig.tone}` }, sig.label)))
+  // ponytail: reminder only when no urgent signal, the fixed card height fits one
+  else if (i.working) el.append(h('div', {}, h('span', { class: 'signal amber' }, 'In progress · Done when finished')))
   const n = textEvents(i).length
   el.append(h('div', { class: 'foot' },
     n ? h('button', { class: 'show-comments', type: 'button', 'aria-haspopup': 'dialog', onclick: () => openComments(i) }, `${plural(n, 'comment')}`) : null,
-    h('button', { class: 'btn done', type: 'button', title: 'Mark done until there is new activity', onclick: () => markDone(i) }, 'Done')))
+    h('button', {
+      class: 'btn work', type: 'button', 'aria-pressed': String(!!i.working), onclick: () => load('/api/working', { id: i.id, on: !i.working }),
+      title: i.working ? `Working since ${new Date(i.working).toLocaleString()}; click to unflag. Mark Done when finished.` : 'Flag as in progress',
+    }, i.working ? `▶ Working ${ago(i.working)}` : 'Work on it'),
+    h('button', { class: 'btn done', type: 'button', title: i.working ? 'Finished? Mark done and clear the working flag' : 'Mark done until there is new activity', onclick: () => markDone(i) }, 'Done')))
   return el
 }
 
 function sortWithin(key, items) {
   const byTime = (a, b) => b.latest.localeCompare(a.latest)
   if (key !== 'action' && key !== 'issue-new') return items.sort(byTime)
-  return items.sort((a, b) => topSignal(b).rank - topSignal(a).rank || byTime(a, b)) // most urgent, then newest
+  // in progress first, then most urgent, then newest
+  return items.sort((a, b) => Number(!!b.working) - Number(!!a.working) || topSignal(b).rank - topSignal(a).rank || byTime(a, b))
 }
 
 function renderRepoChips(repos, active, items) {

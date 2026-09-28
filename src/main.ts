@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { groupNotices, markDone, needsDetail, reconcile, view, type Notice, type State } from './events.ts'
+import { groupNotices, markDone, needsDetail, reconcile, setWorking, view, type Notice, type State } from './events.ts'
 import { fetchDetails, ghToken, searchItems } from './github.ts'
 
 const PORT = 8765
@@ -150,6 +150,13 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return send(res, 400, { error: 'expected {id, upTo}' })
     }
     state = markDone(state, body.id, body.upTo)
+    saveState(state)
+    return send(res, 200, snapshot())
+  }
+  if (route === 'POST /api/working') {
+    const body = (await readJson(req).catch(() => null)) as { id?: unknown; on?: unknown } | null
+    if (typeof body?.id !== 'string' || typeof body.on !== 'boolean') return send(res, 400, { error: 'expected {id, on}' })
+    state = setWorking(state, body.id, body.on, nowIso())
     saveState(state)
     return send(res, 200, snapshot())
   }

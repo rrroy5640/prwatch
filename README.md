@@ -54,6 +54,8 @@ There are two pages: **Pull requests** and **Issues** (`#issues`).
 
 Clicking **Done** on a card marks it read up to the newest event shown. Anything that arrives afterwards makes it unread again. Marking a merged or closed item done drops it completely.
 
+**Work on it** on a card flags it as in progress. A flagged card stays in **Needs you** (sorted first, amber frame) even with nothing unread, until you click **Done**, which also clears the flag. The flag lives in `state.json`, so it survives restarts.
+
 Cards also carry state tags: Draft, Merged, Closed, Approved, Changes requested, Review required, Conflicts.
 
 Your view settings (filters, layout, collapsed sections, theme) are saved per browser in `localStorage`.
