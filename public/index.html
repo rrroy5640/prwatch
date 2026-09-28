@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR Watch</title>
+<script>
+// resolve the theme before first paint so a reload never flashes the wrong one
+function applyTheme(pref) {
+  const dark = pref === 'dark' || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+}
+try { applyTheme(JSON.parse(localStorage.getItem('prwatch') ?? '{}').theme) } catch { applyTheme('system') }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet">
+<style>
+/* Retro terminal: pixel display face (VT323) for chrome, IBM Plex Mono for reading. Hard 2px borders,
+   square corners, solid offset shadows. Dark = phosphor on warm black; light = ink on paper. */
+:root {
+  color-scheme: light;
+  --bg: #f1efe4; --col: #e7e4d6; --surface: #fffdf4; --raised: #f3f0e3;
+  --fg: #1a1c16; --muted: #555a4c; --faint: #858a7b; --line: #1a1c16; --soft-line: #cfcbb9;
+  --accent: #3f6212; --on-accent: #fffdf4; --accent-soft: rgb(63 98 18 / .12);
+  --red: #c42b1c; --amber: #9a5b00; --green: #2f7d32; --purple: #6d3fc0; --on-red: #fffdf4;
+  --drop: #1a1c16; --backdrop: rgb(26 28 22 / .45); --scan: transparent;
+  --pixel: "VT323", ui-monospace, monospace;
+  --mono: "IBM Plex Mono", "PingFang SC", ui-monospace, Menlo, monospace;
+  --ease: steps(3, end);
+}
+/* dark tokens live in one place; data-theme is set before first paint (see <head> script), "system" follows the OS */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0e0b; --col: #10130f; --surface: #151914; --raised: #1c211a;
+  --fg: #d9e8c6; --muted: #93a585; --faint: #62705a; --line: #3b4735; --soft-line: #283024;
+  --accent: #c6f24e; --on-accent: #0c0e0b; --accent-soft: rgb(198 242 78 / .1);
+  --red: #ff6b5b; --amber: #ffc857; --green: #7ee787; --purple: #c3a6ff; --on-red: #0c0e0b;
+  --drop: #000; --backdrop: rgb(0 0 0 / .7); --scan: rgb(0 0 0 / .18);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--mono); -webkit-font-smoothing: antialiased; }
+/* CRT scanlines (dark only: --scan is transparent in light) */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--scan) 2px 3px);
+}
+
+/* header */
+header {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px;
+  padding: 12px 32px; background: var(--bg); border-bottom: 2px solid var(--line);
+}
+h1 { margin: 0; font: 30px/1 var(--pixel); letter-spacing: .02em; text-transform: uppercase; }
+h1::after { content: "_"; color: var(--accent); animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.status { font: 18px var(--pixel); color: var(--faint); margin-right: auto; text-transform: uppercase; }
+.status.err { color: var(--red); }
+.btn, .seg button, .toggle {
+  font: 19px/1 var(--pixel); text-transform: uppercase; letter-spacing: .03em; color: var(--fg); background: var(--surface);
+  border: 2px solid var(--line); border-radius: 0; padding: 5px 12px 4px; cursor: pointer; box-shadow: 2px 2px 0 var(--drop);
+}
+.btn:hover, .toggle:hover, .seg button:hover { background: var(--raised); }
+.btn:active, .toggle:active, .seg button:active { transform: translate(2px, 2px); box-shadow: none; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--line); min-width: 96px; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .5; cursor: progress; }
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle:has(input:checked) { color: var(--on-accent); background: var(--accent); }
+.seg { display: inline-flex; box-shadow: 2px 2px 0 var(--drop); }
+.seg button { box-shadow: none; }
+.seg button:last-child { border-left: none; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+:focus-visible, .toggle:has(input:focus-visible) { outline: 2px dashed var(--accent); outline-offset: 3px; }
+
+/* page tabs */
+.tabs { display: flex; gap: 4px; margin: 0 8px 0 12px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 3px; border: 2px solid transparent;
+  font: 22px/1 var(--pixel); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); text-decoration: none;
+}
+.tab:hover { color: var(--fg); border-color: var(--soft-line); }
+.tab[aria-current="page"] { color: var(--fg); border-color: var(--line); background: var(--surface); box-shadow: 2px 2px 0 var(--drop); }
+.tab[aria-current="page"]::before { content: ">"; color: var(--accent); }
+
+/* repo filter chips */
+.repos { flex-basis: 100%; display: flex; gap: 8px; overflow-x: auto; padding: 2px 4px 4px 2px; scrollbar-width: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; cursor: pointer;
+  font: 18px/1 var(--pixel); color: var(--muted); background: transparent;
+  border: 2px solid var(--soft-line); border-radius: 0; padding: 3px 10px 2px;
+}
+.chip:hover { color: var(--fg); border-color: var(--line); }
+.chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chip-n { font: 16px/1 var(--pixel); padding: 1px 5px 0; background: var(--red); color: var(--on-red); }
+
+/* sections */
+main { padding: 32px 32px 64px; }
+.board { display: flex; flex-direction: column; gap: 32px; max-width: 1600px; margin: 0 auto; }
+.column { background: var(--col); border: 2px solid var(--line); padding: 8px 20px; min-width: 0; }
+.column h2 { margin: 0; }
+.col-head {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 0; cursor: pointer;
+  font: 24px/1 var(--pixel); text-transform: uppercase; letter-spacing: .04em;
+  color: var(--fg); background: none; border: none; text-align: left;
+}
+.col-head::before { content: ""; width: 10px; height: 10px; background: var(--dot); }
+.col-head .n { font: 24px/1 var(--pixel); color: var(--faint); }
+.col-head .n::before { content: "("; } .col-head .n::after { content: ")"; }
+.col-head .chev { margin-left: auto; color: var(--faint); font: 22px/1 var(--pixel); }
+.col-head .chev::after { content: "[-]"; }
+.col-head[aria-expanded="false"] .chev::after { content: "[+]"; }
+.col-head:hover .chev { color: var(--accent); }
+.column:has(.col-head[aria-expanded="true"]) { padding-bottom: 24px; }
+.stack { margin-top: 8px; }
+/* board: every card in a section has the same fixed size; comments open in a dialog instead of growing the card */
+.board:not(.list) .stack { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 20px; }
+.column.action, .column.issue-new { --card-h: 262px; }
+.column.waiting, .column.handled, .column.issue-read { --card-h: 152px; }
+.board:not(.list) .card { display: flex; flex-direction: column; height: var(--card-h); overflow: hidden; padding: 16px 18px; }
+.board:not(.list) .title { min-height: calc(2em * 1.35); margin-top: 8px; }
+.board:not(.list) .foot, .board:not(.list) .tags { margin-top: auto; padding-top: 12px; }
+.column.action, .column.issue-new { --dot: var(--red); }
+.column.action .n, .column.issue-new .n { color: var(--red); }
+.column.waiting { --dot: var(--amber); }
+.column.handled, .column.issue-read { --dot: var(--faint); }
+.empty { color: var(--faint); font: 20px var(--pixel); text-transform: uppercase; text-align: center; padding: 24px 0; }
+.empty::before { content: "> "; }
+
+/* card */
+.card {
+  position: relative; background: var(--surface); border: 2px solid var(--line); border-radius: 0;
+  box-shadow: 4px 4px 0 var(--drop); transition: transform .12s var(--ease), box-shadow .12s var(--ease), opacity .18s var(--ease);
+}
+.card:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--drop); }
+.card.tone-red { border-color: var(--red); box-shadow: 4px 4px 0 var(--red); }
+.card.tone-red:hover { box-shadow: 6px 6px 0 var(--red); }
+.card.leaving { opacity: 0; transform: translate(4px, 4px); box-shadow: none; }
+.top { display: flex; align-items: center; gap: 10px; font: 13px var(--mono); color: var(--faint); }
+.top .when { margin-left: auto; }
+.ci { display: inline-flex; align-items: center; gap: 5px; }
+.ci::before { content: ""; width: 8px; height: 8px; background: var(--faint); }
+.ci.SUCCESS::before { background: var(--green); }
+.ci.FAILURE::before, .ci.ERROR::before { background: var(--red); }
+.ci.PENDING::before, .ci.EXPECTED::before { background: var(--amber); }
+.title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  margin: 6px 0 0; color: var(--fg); font-weight: 600; font-size: 16px; line-height: 1.35; text-decoration: none;
+}
+.title:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.handled .title, .waiting .title, .issue-read .title { font-weight: 500; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.tag, .signal { font: 18px/1 var(--pixel); text-transform: uppercase; letter-spacing: .03em; padding: 3px 6px 2px; color: var(--muted); border: 2px solid currentColor; }
+.tag::before, .signal::before { content: "["; } .tag::after, .signal::after { content: "]"; }
+.tag.red, .signal.red { color: var(--red); }
+.tag.green, .signal.green { color: var(--green); }
+.tag.purple, .signal.purple { color: var(--purple); }
+.tag.amber, .signal.amber { color: var(--amber); }
+.signal { display: inline-block; margin-top: 12px; }
+
+.actors { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 14px; }
+.actor { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.actor::before { content: ">"; color: var(--accent); font-weight: 600; }
+.actor img, .comments img { image-rendering: pixelated; border: 2px solid var(--line); background: var(--raised); flex-shrink: 0; }
+.actor img { width: 22px; height: 22px; }
+.actor b { font-weight: 600; }
+.actor span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.show-comments {
+  font: 18px/1 var(--pixel); text-transform: uppercase; color: var(--muted); background: none; border: none;
+  padding: 6px 0; cursor: pointer;
+}
+.show-comments::before { content: "▤ "; }
+.show-comments:hover { color: var(--accent); text-decoration: underline; }
+.done { margin-left: auto; flex-shrink: 0; }
+.done:hover { background: var(--green); color: var(--on-accent); }
+
+/* comments dialog */
+dialog.comments-dialog {
+  width: min(780px, calc(100vw - 32px)); max-height: min(80vh, 900px); padding: 0; border: 2px solid var(--line);
+  border-radius: 0; background: var(--surface); color: var(--fg); box-shadow: 8px 8px 0 var(--drop);
+  opacity: 0; transition: opacity .15s var(--ease), overlay .15s allow-discrete, display .15s allow-discrete;
+}
+dialog.comments-dialog[open] { display: flex; flex-direction: column; opacity: 1; }
+@starting-style { dialog.comments-dialog[open] { opacity: 0; } }
+dialog.comments-dialog::backdrop { background: var(--backdrop); }
+.dlg-head { padding: 18px 22px 14px; border-bottom: 2px solid var(--line); background: var(--raised); }
+.dlg-head .title { -webkit-line-clamp: 3; font-size: 18px; margin-top: 6px; }
+.comments { list-style: none; margin: 0; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.comments li { display: flex; gap: 12px; font-size: 14.5px; line-height: 1.55; }
+.comments img { width: 28px; height: 28px; }
+.comments .bubble { flex: 1; min-width: 0; padding: 10px 14px; background: var(--raised); border: 2px solid var(--soft-line); overflow-wrap: anywhere; white-space: pre-line; }
+.comments .meta { font: 13px var(--mono); color: var(--faint); margin-bottom: 4px; white-space: normal; }
+.comments .meta b { color: var(--fg); font-weight: 600; }
+.comments .file { color: var(--accent); }
+.dlg-foot { display: flex; gap: 8px; justify-content: space-between; padding: 14px 22px; border-top: 2px solid var(--line); }
+.dlg-foot a.btn { text-decoration: none; }
+
+/* list layout: same cards, laid out as rows grouped by section */
+.board.list { max-width: 1100px; gap: 24px; }
+.board.list .column { background: none; border: none; padding: 0; }
+.board.list .stack { background: var(--surface); border: 2px solid var(--line); box-shadow: 4px 4px 0 var(--drop); }
+.board.list .card {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: center;
+  box-shadow: none; border: none; border-top: 2px solid var(--soft-line); padding: 14px 20px;
+}
+.board.list .card:hover { transform: none; box-shadow: none; background: var(--raised); }
+.board.list .card:first-child { border-top: none; }
+.board.list .card.tone-red { box-shadow: inset 4px 0 0 var(--red); }
+.board.list .top { grid-column: 2; grid-row: 1; }
+.board.list .title { grid-column: 1; grid-row: 1; margin: 0; -webkit-line-clamp: 1; }
+.board.list .actors, .board.list .signal, .board.list .tags { grid-column: 1; margin-top: 6px; }
+.board.list .actors { flex-direction: row; flex-wrap: wrap; gap: 4px 16px; }
+.board.list .signal { justify-self: start; }
+.board.list .foot { grid-column: 1 / -1; margin-top: 6px; }
+
+@media (max-width: 900px) {
+  header, main { padding-left: 16px; padding-right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { transition: none !important; }
+  h1::after { animation: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>PR Watch</h1>
+  <nav class="tabs" id="tabs" aria-label="Pages"></nav>
+  <span class="status" id="status" role="status"></span>
+  <label class="toggle"><input type="checkbox" id="mine">Mine only</label>
+  <div class="seg" role="group" aria-label="Layout">
+    <button type="button" data-layout="board">Board</button><button type="button" data-layout="list">List</button>
+  </div>
+  <button class="btn" id="theme" type="button"></button>
+  <button class="btn" id="refresh" type="button">Refresh</button>
+  <nav class="repos" id="repos" aria-label="Filter by repository"></nav>
+</header>
+<main><div id="board" class="board"></div></main>
+<dialog id="comments" class="comments-dialog" aria-labelledby="dlg-title"></dialog>
+<script>
+const UI_POLL_MS = 15_000
+const LEAVE_MS = 180
+const MAX_ACTORS = 2 // fits the fixed card height
+// each page is a list of sections; page comes from the URL hash so reloads and bookmarks keep it
+const PAGES = {
+  prs: { label: 'Pull requests', type: 'PR', columns: [
+    { key: 'action', title: 'Needs you', empty: 'All clear' },
+    { key: 'waiting', title: 'Waiting on others', empty: 'Nothing waiting' },
+    { key: 'handled', title: 'Handled', empty: 'Nothing here' },
+  ] },
+  issues: { label: 'Issues', type: 'Issue', columns: [
+    { key: 'issue-new', title: 'Needs you', empty: 'All clear' },
+    { key: 'issue-read', title: 'Handled', empty: 'Nothing here' },
+  ] },
+}
+const currentPage = () => (location.hash === '#issues' ? 'issues' : 'prs')
+const $ = id => document.getElementById(id)
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)')
+
+let prefs = { mine: false, layout: 'board', repos: [], collapsed: [], theme: 'system' } // repos: [] = all; collapsed: section keys
+try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem('prwatch') ?? '{}') } } catch {}
+if (!['board', 'list'].includes(prefs.layout)) prefs.layout = 'board' // older versions stored 'cards'
+if (!Array.isArray(prefs.repos)) prefs.repos = []
+if (!Array.isArray(prefs.collapsed)) prefs.collapsed = []
+const THEMES = { system: '◐ Auto', light: '☀ Light', dark: '☾ Dark' }
+if (!(prefs.theme in THEMES)) prefs.theme = 'system'
+const savePrefs = () => { try { localStorage.setItem('prwatch', JSON.stringify(prefs)) } catch {} }
+let snap = { me: '', items: [], lastPoll: '', lastError: '' }
+
+// DOM via textContent only: GitHub text never goes through innerHTML
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag)
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === false || v == null) continue
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
+    else el.setAttribute(k, v === true ? '' : v)
+  }
+  el.append(...kids.flat().filter(k => k != null && k !== false))
+  return el
+}
+
+function ago(t) {
+  if (!t) return ''
+  const m = (Date.now() - new Date(t)) / 60000
+  if (m < 1) return 'now'
+  if (m < 60) return `${Math.round(m)}m`
+  if (m < 1440) return `${Math.round(m / 60)}h`
+  return `${Math.round(m / 1440)}d`
+}
+
+// --- derive what a card says ---
+function column(i) {
+  if (i.type === 'Issue') return i.unread ? 'issue-new' : 'issue-read'
+  if (i.unread) return 'action'
+  if (i.type === 'PR' && i.state === 'OPEN' && i.author === snap.me && i.review !== 'APPROVED') return 'waiting'
+  return 'handled'
+}
+
+// the single most urgent thing in the unread events
+function signalOf(e) {
+  const ciBad = e.kind === 'ci' && e.text !== 'success'
+  if (e.kind === 'changes_requested') return { rank: 3, tone: 'red', label: `${e.actor} requested changes` }
+  if (ciBad) return { rank: 3, tone: 'red', label: `CI ${e.text}` }
+  if (e.kind === 'review_requested') return { rank: 2, tone: 'amber', label: `${e.actor} requested your review` }
+  if (e.kind === 'approved') return { rank: 1, tone: 'green', label: `${e.actor} approved` }
+  if (e.kind === 'merged') return { rank: 1, tone: 'purple', label: `${e.actor} merged` }
+  if (e.kind === 'closed') return { rank: 1, tone: 'red', label: `${e.actor} closed` }
+  return { rank: 0 }
+}
+const topSignal = i => i.unreadEvents.map(signalOf).reduce((a, b) => (b.rank >= a.rank ? b : a), { rank: 0 })
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+// "9 comments · 2 pushes" per person, most recently active first
+function actorsOf(i) {
+  const by = new Map()
+  for (const e of i.unreadEvents) {
+    if (e.kind === 'ci') continue
+    const a = by.get(e.actor) ?? { login: e.actor, bot: e.bot, comments: 0, pushes: 0, last: '' }
+    if (['comment', 'reviewed', 'changes_requested', 'approved', 'dismissed'].includes(e.kind) && e.text) a.comments++
+    if (e.kind === 'commit' || e.kind === 'force_push') a.pushes++
+    a.last = e.time
+    by.set(e.actor, a)
+  }
+  return [...by.values()].sort((a, b) => b.last.localeCompare(a.last)).map(a => ({
+    ...a, summary: [a.comments && plural(a.comments, 'comment'), a.pushes && plural(a.pushes, 'push')].filter(Boolean).join(' · '),
+  }))
+}
+
+function tagsOf(i) {
+  const t = []
+  if (i.draft) t.push(['Draft', ''])
+  if (i.state === 'MERGED') t.push(['Merged', 'purple'])
+  if (i.state === 'CLOSED') t.push(['Closed', 'red'])
+  if (i.review === 'APPROVED') t.push(['Approved', 'green'])
+  if (i.review === 'CHANGES_REQUESTED') t.push(['Changes requested', 'red'])
+  if (i.review === 'REVIEW_REQUIRED') t.push(['Review required', 'amber'])
+  return t
+}
+
+// --- rendering ---
+const textEvents = i => i.unreadEvents.filter(e => e.text && e.kind !== 'ci').reverse()
+const avatar = (login, size) => h('img', {
+  src: `https://github.com/${encodeURIComponent(login)}.png?size=${Math.round(size / 2)}`, // tiny + upscaled = pixel art (Chrome blanks pixelated *downscales*), alt: '', loading: 'lazy', width: size, height: size,
+})
+
+function openComments(i) {
+  const dlg = $('comments')
+  dlg.replaceChildren(
+    h('div', { class: 'dlg-head' },
+      h('div', { style: 'min-width:0' },
+        h('div', { class: 'top' }, `${i.repo} #${i.number}`),
+        h('a', { class: 'title', id: 'dlg-title', href: i.url, target: '_blank', rel: 'noopener' }, i.title))),
+    h('ul', { class: 'comments' }, textEvents(i).map(e => {
+      const m = e.text.match(/^([\w./-]+\.\w+): ([\s\S]*)$/) // "path/file.ts: body" from inline review comments
+      return h('li', {}, avatar(e.actor, 24), h('div', { class: 'bubble' },
+        h('div', { class: 'meta' }, h('b', {}, e.actor), ` · ${ago(e.time)}`, m ? h('span', { class: 'file' }, ` · ${m[1]}`) : null),
+        m ? m[2] : e.text))
+    })),
+    h('div', { class: 'dlg-foot' },
+      h('a', { class: 'btn', href: i.url, target: '_blank', rel: 'noopener' }, 'Open on GitHub ↗'),
+      h('button', { class: 'btn primary', type: 'button', autofocus: true, onclick: () => dlg.close() }, 'Close')))
+  dlg.showModal()
+}
+
+function card(i) {
+  const sig = i.unread ? topSignal(i) : { rank: 0 }
+  const el = h('article', { class: `card ${sig.tone === 'red' ? 'tone-red' : ''}`, 'data-id': i.id },
+    h('div', { class: 'top' },
+      h('span', {}, `${i.repo.split('/')[1]} #${i.number}`),
+      i.ci ? h('span', { class: `ci ${i.ci}`, title: `CI ${i.ci.toLowerCase()}` }, 'CI') : null,
+      h('span', { class: 'when' }, ago(i.latest))),
+    h('a', { class: 'title', href: i.url, target: '_blank', rel: 'noopener', title: i.title }, i.title))
+
+  if (!i.unread) {
+    const tags = tagsOf(i)
+    if (tags.length) el.append(h('div', { class: 'tags' }, tags.map(([label, tone]) => h('span', { class: `tag ${tone}` }, label))))
+    return el
+  }
+  const actors = actorsOf(i).filter(a => a.summary)
+  if (actors.length) {
+    el.append(h('div', { class: 'actors' }, actors.slice(0, MAX_ACTORS).map(a => h('div', { class: 'actor' },
+      avatar(a.login, 18),
+      h('b', {}, a.login), h('span', {}, a.summary)))))
+  }
+  if (sig.rank > 0) el.append(h('div', {}, h('span', { class: `signal ${sig.tone}` }, sig.label)))
+  const n = textEvents(i).length
+  el.append(h('div', { class: 'foot' },
+    n ? h('button', { class: 'show-comments', type: 'button', 'aria-haspopup': 'dialog', onclick: () => openComments(i) }, `${plural(n, 'comment')}`) : null,
+    h('button', { class: 'btn done', type: 'button', title: 'Mark done until there is new activity', onclick: () => markDone(i) }, 'Done')))
+  return el
+}
+
+function sortWithin(key, items) {
+  const byTime = (a, b) => b.latest.localeCompare(a.latest)
+  if (key !== 'action' && key !== 'issue-new') return items.sort(byTime)
+  return items.sort((a, b) => topSignal(b).rank - topSignal(a).rank || byTime(a, b)) // most urgent, then newest
+}
+
+function renderRepoChips(repos, active, items) {
+  const unreadIn = r => items.filter(i => i.repo === r && i.unread).length
+  const sorted = repos.sort((a, b) => unreadIn(b) - unreadIn(a) || a.localeCompare(b))
+  const setRepos = next => { prefs.repos = next; savePrefs(); render() }
+  const chip = (label, pressed, onclick, count, title) => h('button', {
+    type: 'button', class: 'chip', 'aria-pressed': String(pressed), title, onclick,
+  }, label, count ? h('span', { class: 'chip-n' }, String(count)) : null)
+  $('repos').replaceChildren(
+    chip('All', !active.length, () => setRepos([])),
+    ...sorted.map(r => chip(r.split('/')[1], active.includes(r),
+      () => setRepos(active.includes(r) ? active.filter(x => x !== r) : [...active, r]), unreadIn(r), r)))
+}
+
+function stack(c, list) {
+  return h('div', { class: 'stack', id: `stack-${c.key}` }, list.length ? list.map(card) : h('p', { class: 'empty' }, c.empty))
+}
+
+function renderTabs(items) {
+  $('tabs').replaceChildren(...Object.entries(PAGES).map(([key, p]) => {
+    const unread = items.filter(i => i.type === p.type && i.unread).length
+    return h('a', { href: `#${key}`, class: 'tab', 'aria-current': key === currentPage() ? 'page' : null },
+      p.label, unread ? h('span', { class: 'chip-n', title: 'unread' }, String(unread)) : null)
+  }))
+}
+
+function render() {
+  $('theme').textContent = THEMES[prefs.theme]
+  $('theme').title = `Theme: ${prefs.theme} (click to switch)`
+  $('mine').checked = prefs.mine
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.layout === prefs.layout)))
+  const status = $('status')
+  status.className = `status ${snap.lastError ? 'err' : ''}`
+  status.textContent = snap.lastError
+    || (snap.lastPoll ? `synced ${ago(snap.lastPoll) === 'now' ? 'just now' : `${ago(snap.lastPoll)} ago`}` : 'syncing…')
+
+  const mine = snap.items.filter(i => !prefs.mine || i.author === snap.me)
+  // ignore saved repos that no longer have items, so a stale pref can't leave the board empty with no chip to undo it
+  const repos = [...new Set(snap.items.map(i => i.repo))]
+  const active = prefs.repos.filter(r => repos.includes(r))
+  const items = mine.filter(i => !active.length || active.includes(i.repo))
+  const page = PAGES[currentPage()]
+  renderTabs(items)
+  renderRepoChips(repos, active, mine.filter(i => i.type === page.type))
+  const unread = snap.items.filter(i => i.unread).length
+  document.title = `${unread ? `(${unread}) ` : ''}PR Watch`
+
+  const board = $('board')
+  board.className = `board ${prefs.layout}`
+  board.replaceChildren(...page.columns.map(c => {
+    const list = sortWithin(c.key, items.filter(i => column(i) === c.key))
+    const expanded = !prefs.collapsed.includes(c.key)
+    const toggle = () => {
+      prefs.collapsed = expanded ? [...prefs.collapsed, c.key] : prefs.collapsed.filter(k => k !== c.key)
+      savePrefs(); render()
+      document.querySelector(`.column.${c.key} .col-head`).focus() // render replaced the button; keep keyboard focus
+    }
+    return h('section', { class: `column ${c.key}`, 'aria-label': c.title },
+      h('h2', {}, h('button', { class: 'col-head', type: 'button', 'aria-expanded': String(expanded), 'aria-controls': `stack-${c.key}`, onclick: toggle },
+        h('span', {}, c.title), h('span', { class: 'n' }, String(list.length)),
+        h('span', { class: 'chev', 'aria-hidden': 'true' }))),
+      expanded ? stack(c, list) : null)
+  }))
+}
+
+// --- actions ---
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? res.statusText)
+  return data
+}
+
+async function load(path = '/api/state', body) {
+  try { snap = await api(path, body) } catch (e) { snap = { ...snap, lastError: `UI: ${e.message}` } }
+  render()
+}
+
+async function markDone(i) {
+  // look the card up at click time: the 15s re-render may have replaced the element
+  document.querySelector(`.card[data-id="${CSS.escape(i.id)}"]`)?.classList.add('leaving')
+  const wait = new Promise(r => setTimeout(r, reducedMotion.matches ? 0 : LEAVE_MS))
+  try {
+    const [next] = await Promise.all([api('/api/done', { id: i.id, upTo: i.unreadEvents.at(-1)?.time ?? '' }), wait])
+    snap = next
+  } catch (e) {
+    snap = { ...snap, lastError: `Done failed: ${e.message}` }
+  }
+  render()
+}
+
+addEventListener('hashchange', () => render())
+$('comments').onclick = e => { if (e.target === e.currentTarget) e.currentTarget.close() }
+$('mine').onchange = e => { prefs.mine = e.target.checked; savePrefs(); render() }
+document.querySelectorAll('.seg button').forEach(b => {
+  b.onclick = () => { prefs.layout = b.dataset.layout; savePrefs(); render() }
+})
+$('theme').onclick = () => {
+  const order = Object.keys(THEMES)
+  prefs.theme = order[(order.indexOf(prefs.theme) + 1) % order.length]
+  savePrefs(); applyTheme(prefs.theme); render()
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(prefs.theme))
+$('refresh').onclick = async e => {
+  e.target.disabled = true
+  await load('/api/refresh', {})
+  e.target.disabled = false
+}
+load()
+setInterval(() => load(), UI_POLL_MS)
+</script>
+</body>
+</html>
