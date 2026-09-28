@@ -302,6 +302,7 @@ function signalOf(e) {
   const ciBad = e.kind === 'ci' && e.text !== 'success'
   if (e.kind === 'changes_requested') return { rank: 3, tone: 'red', label: `${e.actor} requested changes` }
   if (ciBad) return { rank: 3, tone: 'red', label: `CI ${e.text}` }
+  if (e.kind === 'conflict') return { rank: 3, tone: 'red', label: 'Merge conflict' }
   if (e.kind === 'review_requested') return { rank: 2, tone: 'amber', label: `${e.actor} requested your review` }
   if (e.kind === 'approved') return { rank: 1, tone: 'green', label: `${e.actor} approved` }
   if (e.kind === 'merged') return { rank: 1, tone: 'purple', label: `${e.actor} merged` }
@@ -315,7 +316,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 function actorsOf(i) {
   const by = new Map()
   for (const e of i.unreadEvents) {
-    if (e.kind === 'ci') continue
+    if (e.kind === 'ci' || e.kind === 'conflict') continue
     const a = by.get(e.actor) ?? { login: e.actor, bot: e.bot, comments: 0, pushes: 0, last: '' }
     if (['comment', 'reviewed', 'changes_requested', 'approved', 'dismissed'].includes(e.kind) && e.text) a.comments++
     if (e.kind === 'commit' || e.kind === 'force_push') a.pushes++
@@ -332,6 +333,7 @@ function tagsOf(i) {
   if (i.draft) t.push(['Draft', ''])
   if (i.state === 'MERGED') t.push(['Merged', 'purple'])
   if (i.state === 'CLOSED') t.push(['Closed', 'red'])
+  if (i.state === 'OPEN' && i.mergeable === 'CONFLICTING') t.push(['Conflicts', 'red'])
   if (i.review === 'APPROVED') t.push(['Approved', 'green'])
   if (i.review === 'CHANGES_REQUESTED') t.push(['Changes requested', 'red'])
   if (i.review === 'REVIEW_REQUIRED') t.push(['Review required', 'amber'])

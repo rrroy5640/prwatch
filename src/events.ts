@@ -2,7 +2,7 @@
 
 export type Kind =
   | 'comment' | 'approved' | 'changes_requested' | 'reviewed' | 'dismissed'
-  | 'commit' | 'force_push' | 'review_requested' | 'merged' | 'closed' | 'ci'
+  | 'commit' | 'force_push' | 'review_requested' | 'merged' | 'closed' | 'ci' | 'conflict'
 
 export type Event = { time: string; actor: string; kind: Kind; text: string; bot: boolean }
 
@@ -18,6 +18,7 @@ export type Item = {
   draft: boolean
   review: string | null
   ci: string | null
+  mergeable: string | null // MERGEABLE | CONFLICTING | UNKNOWN (PRs only)
   updatedAt: string
 }
 
@@ -37,6 +38,7 @@ export type RawItem = {
   state: Item['state']
   isDraft?: boolean
   reviewDecision?: string | null
+  mergeable?: string
   updatedAt: string
   author: RawActor
   repository: { nameWithOwner: string }
@@ -66,7 +68,7 @@ const REVIEW_KIND: Record<string, Kind> = {
 const VERB: Record<Kind, string> = {
   comment: 'commented', approved: 'approved', changes_requested: 'requested changes', reviewed: 'reviewed',
   dismissed: 'dismissed a review', commit: 'pushed a commit', force_push: 'force-pushed',
-  review_requested: 'requested your review', merged: 'merged', closed: 'closed', ci: 'CI',
+  review_requested: 'requested your review', merged: 'merged', closed: 'closed', ci: 'CI', conflict: 'merge conflict',
 }
 
 const clip = (s = '') => {
@@ -91,6 +93,7 @@ export function toItem(raw: RawItem): Item {
     draft: raw.isDraft ?? false,
     review: raw.reviewDecision ?? null,
     ci: raw.commits?.nodes[0]?.commit.statusCheckRollup?.state ?? null,
+    mergeable: raw.mergeable ?? null,
     updatedAt: raw.updatedAt,
   }
 }
@@ -142,6 +145,12 @@ export function ciEvent(prev: string | null | undefined, next: string | null, no
   return { time: now, actor: 'CI', kind: 'ci', text: next.toLowerCase(), bot: true }
 }
 
+/** Mergeability is a snapshot too: one event each time the PR becomes conflicting. */
+export function conflictEvent(prev: string | null | undefined, next: string | null, now: string): Event | null {
+  if (prev === undefined || prev === 'CONFLICTING' || next !== 'CONFLICTING') return null
+  return { time: now, actor: 'GitHub', kind: 'conflict', text: '', bot: true }
+}
+
 /** Which ids need a timeline fetch: new/changed search hits, plus open items that fell out of the search. */
 export function needsDetail(state: State, found: Item[]): string[] {
   const foundIds = new Set(found.map(i => i.id))
@@ -169,12 +178,14 @@ export function reconcile(
     const d = details.get(id)
     const t = state.tracked[id]
     if (d === null) continue // deleted or no longer accessible
-    const item = f ?? d?.item ?? t!.item
+    const fresh = f ?? d?.item ?? t!.item
+    // GitHub answers UNKNOWN while it recomputes mergeability: keep the last known value
+    const item = fresh.mergeable === 'UNKNOWN' && t ? { ...fresh, mergeable: t.item.mergeable } : fresh
     if (!f && d && item.state === 'OPEN') continue // still open but no longer involves me
 
-    const ci = t && f ? ciEvent(t.item.ci, f.ci, now) : null
-    const kept = d ? (t?.events ?? []).filter(e => e.kind === 'ci') : (t?.events ?? [])
-    const events = [...(d?.events ?? []), ...kept, ...(ci ? [ci] : [])].sort(byTime).slice(-MAX_EVENTS)
+    const snaps = t && f ? [ciEvent(t.item.ci, f.ci, now), conflictEvent(t.item.mergeable, item.mergeable, now)] : []
+    const kept = d ? (t?.events ?? []).filter(e => e.kind === 'ci' || e.kind === 'conflict') : (t?.events ?? [])
+    const events = [...(d?.events ?? []), ...kept, ...snaps.filter(e => e !== null)].sort(byTime).slice(-MAX_EVENTS)
     // closed/merged with no close event by someone else => I closed it myself: stop tracking
     if (item.state !== 'OPEN' && !events.some(e => e.kind === 'merged' || e.kind === 'closed')) continue
 
@@ -191,7 +202,7 @@ export function reconcile(
 }
 
 function noticeFor(item: Item, e: Event): Notice {
-  const what = e.kind === 'ci' ? `CI ${e.text}` : `${e.actor} ${VERB[e.kind]}`
+  const what = e.kind === 'ci' ? `CI ${e.text}` : e.kind === 'conflict' ? 'Merge conflict' : `${e.actor} ${VERB[e.kind]}`
   return { group: item.id, title: `${item.repo}#${item.number}`, message: `${what} · ${item.title}`, url: item.url }
 }
 

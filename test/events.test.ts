@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  ciEvent, groupNotices, markDone, needsDetail, reconcile, toEvents, view,
+  ciEvent, conflictEvent, groupNotices, markDone, needsDetail, reconcile, toEvents, view,
   type Detail, type Event, type Item, type RawItem, type State,
 } from '../src/events.ts'
 
@@ -10,7 +10,7 @@ const user = (login: string) => ({ __typename: 'User', login })
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'PR1', type: 'PR', repo: 'o/r', number: 1, title: 'Fix it', url: 'https://github.com/o/r/pull/1',
-  author: ME, state: 'OPEN', draft: false, review: null, ci: null, updatedAt: 't1', ...over,
+  author: ME, state: 'OPEN', draft: false, review: null, ci: null, mergeable: null, updatedAt: 't1', ...over,
 })
 const ev = (time: string, over: Partial<Event> = {}): Event =>
   ({ time, actor: 'bob', kind: 'comment', text: '', bot: false, ...over })
@@ -154,4 +154,16 @@ test('a merge is reported as merged, not closed (GitHub logs both at the same in
   const merged = item({ state: 'MERGED' })
   const r = reconcile(state, [], new Map([['PR1', { item: merged, events }]]), 'n', true)
   assert.match(r.notices[0]!.message, /nicky merged/)
+})
+
+test('conflict fires once per transition into CONFLICTING, UNKNOWN keeps last value', () => {
+  assert.equal(conflictEvent(undefined, 'CONFLICTING', 'n'), null)
+  assert.equal(conflictEvent('MERGEABLE', 'CONFLICTING', 'n')?.kind, 'conflict')
+  let { state } = reconcile(empty, [item({ mergeable: 'MERGEABLE' })], new Map(), '1', false)
+  const r = reconcile(state, [item({ mergeable: 'CONFLICTING' })], new Map(), '2', true)
+  assert.equal(r.notices[0]?.message.startsWith('Merge conflict'), true)
+  state = reconcile(r.state, [item({ mergeable: 'UNKNOWN' })], new Map(), '3', true).state
+  assert.equal(state.tracked.PR1!.item.mergeable, 'CONFLICTING')
+  const again = reconcile(state, [item({ mergeable: 'CONFLICTING' })], new Map(), '4', true)
+  assert.equal(again.state.tracked.PR1!.events.filter(e => e.kind === 'conflict').length, 1)
 })
