@@ -1,15 +1,20 @@
 # PR Watch
 
-A local watcher for the GitHub pull requests and issues you're involved in. It polls GitHub every minute, sends macOS notifications when someone else does something, and serves a small board at http://localhost:8765 showing what needs you.
+A local watcher for the GitHub pull requests and issues you're involved in. It polls GitHub every minute, sends desktop notifications when someone else does something, and serves a small board at http://localhost:8765 showing what needs you.
 
 No server, no database, no GitHub app. It uses your `gh` login and keeps its state in a single JSON file.
 
 ## Requirements
 
-- macOS (notifications use `terminal-notifier`)
 - Node.js 24 or later (it runs the `.ts` files directly)
 - [GitHub CLI](https://cli.github.com/), logged in: `gh auth login`
-- `brew install terminal-notifier`
+- For notifications (optional; without it the board still works):
+
+| OS | Notifier | Click opens the PR |
+|---|---|---|
+| macOS | `brew install terminal-notifier` | yes |
+| Linux | `notify-send` (package `libnotify-bin` / `libnotify`) | no |
+| Windows | built-in PowerShell toast, nothing to install | no |
 
 ## Run
 
@@ -18,7 +23,7 @@ npm install      # only for typecheck; runtime has no dependencies
 npm start        # → PR Watch on http://localhost:8765
 ```
 
-On first run, notifications may be blocked. Run `open "$(brew --prefix terminal-notifier)/terminal-notifier.app"` once, then allow it under System Settings → Notifications.
+On macOS, notifications may be blocked on first run. Run `open "$(brew --prefix terminal-notifier)/terminal-notifier.app"` once, then allow it under System Settings → Notifications.
 
 ## What it watches
 
@@ -65,7 +70,7 @@ Your view settings (filters, layout, collapsed sections, theme) are saved per br
 
 | Path | What |
 |---|---|
-| `src/main.ts` | Poll loop, state file, notifications, HTTP server (binds 127.0.0.1 only) |
+| `src/main.ts` | Poll loop, state file, per-OS notifications, HTTP server (binds 127.0.0.1 only) |
 | `src/github.ts` | GraphQL queries via `fetch`, using the token from `gh auth token` |
 | `src/events.ts` | Pure logic: GitHub data → items/events, unread tracking, notifications |
 | `public/index.html` | The whole UI, no build step |

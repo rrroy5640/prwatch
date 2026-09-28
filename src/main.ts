@@ -34,25 +34,53 @@ function saveState(s: State) {
   renameSync(tmp, STATE_FILE) // atomic: a crash mid-write never leaves a half file
 }
 
-function requireNotifier() {
+// Windows toast via built-in PowerShell. Text comes in through env vars, so a PR title can't inject script.
+const WIN_TOAST = `
+$N = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$x = $N::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$t = $x.GetElementsByTagName('text')
+[void]$t.Item(0).AppendChild($x.CreateTextNode($env:PRW_TITLE))
+[void]$t.Item(1).AppendChild($x.CreateTextNode($env:PRW_MESSAGE))
+$N::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($x)`
+
+// ponytail: click-to-open only on macOS; Linux/Windows toasts are text only
+const NOTIFIERS: Record<string, { cmd: string; probe: string[]; install: string; args: (n: Notice) => string[] }> = {
+  darwin: {
+    cmd: 'terminal-notifier', probe: ['-help'], install: 'brew install terminal-notifier',
+    args: n => ['-title', n.title, '-message', n.message, '-open', n.url, '-group', n.group],
+  },
+  linux: {
+    cmd: 'notify-send', probe: ['--version'], install: 'install libnotify (e.g. apt install libnotify-bin)',
+    args: n => ['--app-name=PR Watch', n.title, n.message],
+  },
+  win32: {
+    cmd: 'powershell.exe', probe: ['-NoProfile', '-Command', 'exit'], install: 'Windows PowerShell is missing',
+    args: () => ['-NoProfile', '-NonInteractive', '-Command', WIN_TOAST],
+  },
+}
+let notifier: (typeof NOTIFIERS)[string] | undefined = NOTIFIERS[process.platform]
+
+function checkNotifier() {
+  if (!notifier) return console.warn(`notifications not supported on ${process.platform}; the board still works`)
   try {
-    execFileSync('terminal-notifier', ['-help'], { stdio: 'ignore' })
+    execFileSync(notifier.cmd, notifier.probe, { stdio: 'ignore' })
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return
-    console.error('terminal-notifier not found. Install it: brew install terminal-notifier')
-    process.exit(1)
+    console.warn(`${notifier.cmd} not found, notifications off (${notifier.install}); the board still works`)
+    notifier = undefined
   }
 }
 
 function notify(n: Notice) {
-  execFile('terminal-notifier', ['-title', n.title, '-message', n.message, '-open', n.url, '-group', n.group],
-    (err, _out, stderr) => {
-      if (!err) return
-      console.error('notification failed:', stderr.trim() || err.message)
-      if (stderr.includes('not allowed')) {
-        console.error(`  fix: run \`open ${NOTIFIER_APP}\` once, then allow it in System Settings → Notifications`)
-      }
-    })
+  if (!notifier) return
+  const env = { ...process.env, PRW_TITLE: n.title, PRW_MESSAGE: n.message }
+  execFile(notifier.cmd, notifier.args(n), { env }, (err, _out, stderr) => {
+    if (!err) return
+    console.error('notification failed:', stderr.trim() || err.message)
+    if (process.platform === 'darwin' && stderr.includes('not allowed')) {
+      console.error(`  fix: run \`open ${NOTIFIER_APP}\` once, then allow it in System Settings → Notifications`)
+    }
+  })
 }
 
 const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') // same format as GitHub timestamps
@@ -128,7 +156,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   send(res, 404, { error: 'not found' })
 }
 
-requireNotifier()
+checkNotifier()
 createServer((req, res) => {
   handle(req, res).catch(e => send(res, 500, { error: (e as Error).message }))
 }).listen(PORT, '127.0.0.1', () => console.log(`PR Watch on ${APP_URL}`))
