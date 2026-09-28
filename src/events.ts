@@ -19,6 +19,8 @@ export type Item = {
   review: string | null
   ci: string | null
   mergeable: string | null // MERGEABLE | CONFLICTING | UNKNOWN (PRs only)
+  base: string | null // target branch (PRs only)
+  basePr: number | null // open PR whose head is that branch, i.e. this PR is stacked on it
   updatedAt: string
 }
 
@@ -40,6 +42,8 @@ export type RawItem = {
   isDraft?: boolean
   reviewDecision?: string | null
   mergeable?: string
+  baseRefName?: string
+  baseRef?: { associatedPullRequests: { nodes: { number: number }[] } } | null
   updatedAt: string
   author: RawActor
   repository: { nameWithOwner: string }
@@ -95,6 +99,8 @@ export function toItem(raw: RawItem): Item {
     review: raw.reviewDecision ?? null,
     ci: raw.commits?.nodes[0]?.commit.statusCheckRollup?.state ?? null,
     mergeable: raw.mergeable ?? null,
+    base: raw.baseRefName ?? null,
+    basePr: raw.baseRef?.associatedPullRequests.nodes[0]?.number ?? null,
     updatedAt: raw.updatedAt,
   }
 }

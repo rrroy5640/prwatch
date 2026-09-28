@@ -10,6 +10,7 @@ const TIMEOUT_MS = 30_000
 const BASE = `
 fragment PRBase on PullRequest {
   id number title url state isDraft reviewDecision mergeable updatedAt
+  baseRefName baseRef { associatedPullRequests(first: 1, states: OPEN) { nodes { number } } }
   author { __typename login } repository { nameWithOwner }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }

@@ -138,6 +138,10 @@ main { padding: 32px 32px 64px; }
 .card.leaving { opacity: 0; transform: translate(4px, 4px); box-shadow: none; }
 .top { display: flex; align-items: center; gap: 10px; font: 13px var(--mono); color: var(--faint); }
 .top .when { margin-left: auto; }
+.base { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.base { color: var(--accent); font-weight: 600; text-decoration: none; }
+a.base:hover { text-decoration: underline; text-underline-offset: 3px; }
+.has-stack { color: var(--accent); font-weight: 600; cursor: help; }
 .ci { display: inline-flex; align-items: center; gap: 5px; }
 .ci::before { content: ""; width: 8px; height: 8px; background: var(--faint); }
 .ci.SUCCESS::before { background: var(--green); }
@@ -372,12 +376,28 @@ function openComments(i) {
   dlg.showModal()
 }
 
+// merge target: stacked PRs link to the PR they sit on, everything else just names the branch
+function baseOf(i) {
+  if (i.basePr) {
+    return h('a', { class: 'base', href: i.url.replace(/\d+$/, i.basePr), target: '_blank', rel: 'noopener', title: `Stacked on #${i.basePr} (${i.base})` }, `→ #${i.basePr}`)
+  }
+  return i.base ? h('span', { class: 'base', title: `Merges into ${i.base}` }, `→ ${i.base}`) : null
+}
+
+// ponytail: only sees stacked PRs that are on the board; others stacked on it by people you don't follow are missed
+function numberOf(i) {
+  const kids = snap.items.filter(k => k.repo === i.repo && k.basePr === i.number).map(k => `#${k.number}`)
+  if (!kids.length) return `#${i.number}`
+  return h('span', { class: 'has-stack', title: `Stacked on this: ${kids.join(', ')}` }, `#${i.number}`)
+}
+
 function card(i) {
   const sig = i.unread ? topSignal(i) : { rank: 0 }
   const tone = i.working ? 'working' : sig.tone === 'red' ? 'tone-red' : ''
   const el = h('article', { class: `card ${tone}`, 'data-id': i.id },
     h('div', { class: 'top' },
-      h('span', {}, `${i.repo.split('/')[1]} #${i.number}`),
+      h('span', {}, `${i.repo.split('/')[1]} `, numberOf(i)),
+      baseOf(i),
       i.ci ? h('span', { class: `ci ${i.ci}`, title: `CI ${i.ci.toLowerCase()}` }, 'CI') : null,
       h('span', { class: 'when' }, ago(i.latest))),
     h('a', { class: 'title', href: i.url, target: '_blank', rel: 'noopener', title: i.title }, i.title))

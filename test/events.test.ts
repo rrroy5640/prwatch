@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  ciEvent, conflictEvent, groupNotices, markDone, needsDetail, reconcile, setWorking, toEvents, view,
+  ciEvent, conflictEvent, groupNotices, markDone, needsDetail, reconcile, setWorking, toEvents, toItem, view,
   type Detail, type Event, type Item, type RawItem, type State,
 } from '../src/events.ts'
 
@@ -10,7 +10,7 @@ const user = (login: string) => ({ __typename: 'User', login })
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'PR1', type: 'PR', repo: 'o/r', number: 1, title: 'Fix it', url: 'https://github.com/o/r/pull/1',
-  author: ME, state: 'OPEN', draft: false, review: null, ci: null, mergeable: null, updatedAt: 't1', ...over,
+  author: ME, state: 'OPEN', draft: false, review: null, ci: null, mergeable: null, base: null, basePr: null, updatedAt: 't1', ...over,
 })
 const ev = (time: string, over: Partial<Event> = {}): Event =>
   ({ time, actor: 'bob', kind: 'comment', text: '', bot: false, ...over })
@@ -181,4 +181,19 @@ test('working flag survives polls, can be cleared, and Done clears it', () => {
   const done = view(markDone(polled, 'PR1', ''))[0]!
   assert.equal(done.working, null)
   assert.equal(done.unreadCount, 2)
+})
+
+test('toItem: base branch, plus the parent PR number when stacked', () => {
+  const raw = (over: Partial<RawItem>) => ({
+    __typename: 'PullRequest', id: 'P', number: 2, title: 't', url: 'u', state: 'OPEN', updatedAt: 't',
+    author: user(ME), repository: { nameWithOwner: 'o/r' }, ...over,
+  }) as RawItem
+  const onMain = toItem(raw({ baseRefName: 'main', baseRef: { associatedPullRequests: { nodes: [] } } }))
+  assert.deepEqual([onMain.base, onMain.basePr], ['main', null])
+  const stacked = toItem(raw({ baseRefName: 'feat/a', baseRef: { associatedPullRequests: { nodes: [{ number: 1 }] } } }))
+  assert.deepEqual([stacked.base, stacked.basePr], ['feat/a', 1])
+  const deleted = toItem(raw({ baseRefName: 'gone', baseRef: null })) // base branch deleted
+  assert.deepEqual([deleted.base, deleted.basePr], ['gone', null])
+  const issue = toItem(raw({ __typename: 'Issue' }))
+  assert.deepEqual([issue.base, issue.basePr], [null, null])
 })

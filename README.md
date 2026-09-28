@@ -56,6 +56,8 @@ Clicking **Done** on a card marks it read up to the newest event shown. Anything
 
 **Work on it** on a card flags it as in progress. A flagged card stays in **Needs you** (sorted first, amber frame) even with nothing unread, until you click **Done**, which also clears the flag. The flag lives in `state.json`, so it survives restarts.
 
+PR cards show their merge target in the top line: `→ main` for a normal PR, or `→ #1180` (linked) for a stacked PR whose base branch is another open PR's head. A PR that others are stacked on has its own number highlighted; hover it to see which PRs sit on it (only ones on your board).
+
 Cards also carry state tags: Draft, Merged, Closed, Approved, Changes requested, Review required, Conflicts.
 
 Your view settings (filters, layout, collapsed sections, theme) are saved per browser in `localStorage`.
