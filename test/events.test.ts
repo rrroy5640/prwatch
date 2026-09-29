@@ -108,10 +108,19 @@ test('merged by someone else stays until Done; closed by me is dropped', () => {
   assert.equal(Object.keys(mine.state.tracked).length, 0)
 })
 
-test('open item that left the search (no longer involves me) or was deleted is dropped', () => {
-  const { state } = reconcile(empty, [item()], new Map([['PR1', { item: item(), events: [] }]]), 'n', false)
-  assert.equal(Object.keys(reconcile(state, [], new Map([['PR1', { item: item(), events: [] }]]), 'n', true).state.tracked).length, 0)
-  assert.equal(Object.keys(reconcile(state, [], new Map([['PR1', null]]), 'n', true).state.tracked).length, 0)
+test('an item missing from the search or deleted is dropped only after 3 polls in a row, keeping read state till then', () => {
+  let { state } = reconcile(empty, [item()], new Map([['PR1', { item: item(), events: [ev('2')] }]]), 'n', false)
+  state = setWorking(markDone(state, 'PR1', '2'), 'PR1', true, 'w')
+  const miss = (s: State, d: Detail | null = { item: item(), events: [ev('2')] }) => reconcile(s, [], new Map([['PR1', d]]), 'n', true).state
+  // one flaky search (or a null node from a partial GraphQL error) must not wipe watermark / working flag
+  const once = miss(state)
+  assert.deepEqual([view(once)[0]!.unread, view(once)[0]!.working], [false, 'w'])
+  assert.equal(Object.keys(miss(miss(state, null), null).tracked).length, 1)
+  assert.equal(Object.keys(miss(miss(miss(state))).tracked).length, 0)
+  // found again in between: the count starts over
+  const back = reconcile(miss(miss(state)), [item()], new Map(), 'n', true).state
+  assert.equal(Object.keys(miss(miss(back)).tracked).length, 1)
+  assert.equal(view(back)[0]!.working, 'w')
   // detail fetch missing for it (e.g. failed batch): keep and retry next poll
   assert.equal(Object.keys(reconcile(state, [], new Map(), 'n', true).state.tracked).length, 1)
 })

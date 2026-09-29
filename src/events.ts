@@ -24,8 +24,8 @@ export type Item = {
   updatedAt: string
 }
 
-// working: when you flagged it as in progress (cleared by Done)
-export type Tracked = { item: Item; events: Event[]; watermark: string; notifiedUpTo: string; working?: string }
+// working: when you flagged it as in progress (cleared by Done). missed: polls in a row it looked gone (see MISS_LIMIT)
+export type Tracked = { item: Item; events: Event[]; watermark: string; notifiedUpTo: string; working?: string; missed?: number }
 export type State = { me: string; tracked: Record<string, Tracked> }
 export type Detail = { item: Item; events: Event[] }
 export type Notice = { group: string; title: string; message: string; url: string }
@@ -64,6 +64,9 @@ export type RawTimeline = {
 }
 
 const MAX_EVENTS = 30
+// a successful search can still transiently omit items, and a partial GraphQL error comes back as a null node:
+// only believe "gone" after this many polls in a row, or one flaky response wipes watermarks and working flags
+const MISS_LIMIT = 3
 const MAX_TEXT = 2000 // full enough to read in the comments dialog
 const NOTICE_GROUP_LIMIT = 3
 const CI_TERMINAL = new Set(['SUCCESS', 'FAILURE', 'ERROR'])
@@ -184,11 +187,15 @@ export function reconcile(
     const f = foundById.get(id)
     const d = details.get(id)
     const t = state.tracked[id]
-    if (d === null) continue // deleted or no longer accessible
+    // deleted / no access, or still open but no longer involves me
+    if (d === null || (!f && d && d.item.state === 'OPEN')) {
+      const missed = (t?.missed ?? 0) + 1
+      if (t && missed < MISS_LIMIT) tracked[id] = { ...t, missed }
+      continue
+    }
     const fresh = f ?? d?.item ?? t!.item
     // GitHub answers UNKNOWN while it recomputes mergeability: keep the last known value
     const item = fresh.mergeable === 'UNKNOWN' && t ? { ...fresh, mergeable: t.item.mergeable } : fresh
-    if (!f && d && item.state === 'OPEN') continue // still open but no longer involves me
 
     const snaps = t && f ? [ciEvent(t.item.ci, f.ci, now), conflictEvent(t.item.mergeable, item.mergeable, now)] : []
     const kept = d ? (t?.events ?? []).filter(e => e.kind === 'ci' || e.kind === 'conflict') : (t?.events ?? [])
@@ -203,7 +210,8 @@ export function reconcile(
       if (notify) notices.push(noticeFor(item, events.at(-1)!))
       notifiedUpTo = top
     }
-    tracked[id] = { ...t, item, events, watermark, notifiedUpTo }
+    const { missed: _, ...prev } = t ?? {} // seen again: the miss count starts over
+    tracked[id] = { ...prev, item, events, watermark, notifiedUpTo }
   }
   return { state: { ...state, tracked }, notices }
 }
