@@ -39,11 +39,12 @@ export function column(i: ViewItem, me: string): string {
   return 'handled'
 }
 
-// the single most urgent thing in the unread events
-function signalOf(e: Event): Signal {
-  if (e.kind === 'changes_requested') return { rank: 3, tone: 'red', label: `${e.actor} requested changes` }
-  if (e.kind === 'ci' && e.text !== 'success') return { rank: 3, tone: 'red', label: `CI ${e.text}` }
-  if (e.kind === 'conflict') return { rank: 3, tone: 'red', label: 'Merge conflict' }
+// the single most urgent thing in the unread events; red ones only while the PR is still in that state,
+// so a conflict you resolved or CI you fixed stops shouting (the event itself stays unread until Done)
+function signalOf(e: Event, i: ViewItem): Signal {
+  if (e.kind === 'changes_requested' && i.review === 'CHANGES_REQUESTED') return { rank: 3, tone: 'red', label: `${e.actor} requested changes` }
+  if (e.kind === 'ci' && e.text !== 'success' && (i.ci === 'FAILURE' || i.ci === 'ERROR')) return { rank: 3, tone: 'red', label: `CI ${e.text}` }
+  if (e.kind === 'conflict' && i.mergeable === 'CONFLICTING') return { rank: 3, tone: 'red', label: 'Merge conflict' }
   if (e.kind === 'review_requested') return { rank: 2, tone: 'amber', label: `${e.actor} requested your review` }
   if (e.kind === 'approved') return { rank: 1, tone: 'green', label: `${e.actor} approved` }
   if (e.kind === 'merged') return { rank: 1, tone: 'purple', label: `${e.actor} merged` }
@@ -51,7 +52,7 @@ function signalOf(e: Event): Signal {
   return { rank: 0 }
 }
 export const topSignal = (i: ViewItem): Signal =>
-  i.unreadEvents.map(signalOf).reduce((a, b) => (b.rank >= a.rank ? b : a), { rank: 0 })
+  i.unreadEvents.map(e => signalOf(e, i)).reduce((a, b) => (b.rank >= a.rank ? b : a), { rank: 0 })
 
 const TALK = new Set(['comment', 'reviewed', 'changes_requested', 'approved', 'dismissed'])
 export type Actor = { login: string; comments: number; pushes: number; last: string; summary: string }
