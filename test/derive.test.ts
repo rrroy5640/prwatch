@@ -23,3 +23,12 @@ test('snapshot signals only show while still true: a resolved conflict or fixed 
   assert.equal(topSignal(pr({ unreadEvents: changes, review: 'CHANGES_REQUESTED' })).label, 'amy requested changes')
   assert.equal(topSignal(pr({ unreadEvents: changes, review: 'APPROVED' })).label, 'amy approved')
 })
+
+test('a current conflict or CI failure shows even when no event for it is unread (e.g. it predates tracking)', () => {
+  const other = [ev('comment', 'hi')]
+  assert.equal(topSignal(pr({ unreadEvents: other, mergeable: 'CONFLICTING' })).label, 'Merge conflict')
+  assert.equal(topSignal(pr({ unreadEvents: other, ci: 'ERROR' })).label, 'CI error')
+  assert.equal(topSignal(pr({ unreadEvents: [], ci: 'FAILURE', unread: false, working: 'w' })).label, 'CI failure')
+  assert.equal(topSignal(pr({ unreadEvents: other, state: 'MERGED', mergeable: 'CONFLICTING' })).rank, 0)
+})
+

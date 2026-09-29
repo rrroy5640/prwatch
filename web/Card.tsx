@@ -37,7 +37,7 @@ type CardProps = {
 
 export function Card({ i, kids, onDone, onWork, onComments }: CardProps) {
   const [leaving, setLeaving] = useState(false)
-  const sig: Signal = i.unread ? topSignal(i) : { rank: 0 }
+  const sig: Signal = i.unread || i.working ? topSignal(i) : { rank: 0 }
   const tone = i.working ? 'working' : sig.tone === 'red' ? 'tone-red' : ''
 
   const done = async () => {
