@@ -19,8 +19,8 @@ No server, no database, no GitHub app. It uses your `gh` login and keeps its sta
 ## Run
 
 ```sh
-npm install      # only for typecheck; runtime has no dependencies
-npm start        # → PR Watch on http://localhost:8765
+npm install
+npm start        # builds the UI (vite build), then → PR Watch on http://localhost:8765
 ```
 
 On macOS, notifications may be blocked on first run. Run `open "$(brew --prefix terminal-notifier)/terminal-notifier.app"` once, then allow it under System Settings → Notifications.
@@ -58,7 +58,7 @@ Clicking **Done** on a card marks it read up to the newest event shown. Anything
 
 PR cards show their merge target in the top line: `→ main` for a normal PR, or `→ #1180` (linked) for a stacked PR whose base branch is another open PR's head. A PR that others are stacked on has its own number highlighted; hover it to see which PRs sit on it (only ones on your board).
 
-Cards also carry state tags: Draft, Merged, Closed, Approved, Changes requested, Review required, Conflicts.
+Draft PRs are marked `DRAFT` in the top line of every card. Cards also carry state tags: Merged, Closed, Approved, Changes requested, Review required, Conflicts.
 
 Your view settings (filters, layout, collapsed sections, theme) are saved per browser in `localStorage`.
 
@@ -77,13 +77,14 @@ Your view settings (filters, layout, collapsed sections, theme) are saved per br
 | `src/main.ts` | Poll loop, state file, per-OS notifications, HTTP server (binds 127.0.0.1 only) |
 | `src/github.ts` | GraphQL queries via `fetch`, using the token from `gh auth token` |
 | `src/events.ts` | Pure logic: GitHub data → items/events, unread tracking, notifications |
-| `public/index.html` | The whole UI, no build step |
+| `web/` | The UI: Preact + TSX, built by Vite into `dist/`. `App.tsx` (page, header, sections), `Card.tsx` (card, comments dialog), `derive.ts` (what a card shows and where it goes), `prefs.ts` (localStorage). Types come straight from `src/events.ts`. |
 | `test/events.test.ts` | Tests for `events.ts` |
 | `~/.prwatch/state.json` | Tracked items and read watermarks. Delete it to start fresh. |
 
 ## Develop
 
 ```sh
+npm run dev        # one port (8765): Vite hot reload for web/, server restarts on src/ changes
 npm test           # node --test
 npm run typecheck  # tsc
 ```

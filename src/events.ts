@@ -239,6 +239,8 @@ export function setWorking(state: State, id: string, on: boolean, now: string): 
 }
 
 export type ViewItem = Item & { unread: boolean; unreadCount: number; latest: string; unreadEvents: Event[]; working: string | null }
+/** What GET /api/state returns; the web UI renders only this. */
+export type Snapshot = { me: string; lastPoll: string; lastError: string; items: ViewItem[] }
 
 export function view(state: State): ViewItem[] {
   return Object.values(state.tracked)

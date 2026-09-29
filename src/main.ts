@@ -4,7 +4,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { groupNotices, markDone, needsDetail, reconcile, setWorking, view, type Notice, type State } from './events.ts'
+import { fileURLToPath } from 'node:url'
+import { groupNotices, markDone, needsDetail, reconcile, setWorking, view, type Notice, type Snapshot, type State } from './events.ts'
 import { fetchDetails, ghToken, searchItems } from './github.ts'
 
 const PORT = 8765
@@ -14,7 +15,11 @@ const MAX_BODY = 4096
 const STATE_DIR = join(homedir(), '.prwatch')
 const STATE_FILE = join(STATE_DIR, 'state.json')
 const NOTIFIER_APP = '$(brew --prefix terminal-notifier)/terminal-notifier.app'
-const PAGE = new URL('../public/index.html', import.meta.url)
+const DIST = new URL('../dist/', import.meta.url) // `vite build` output
+// filenames Vite emits; the strict pattern is also what keeps a request from escaping dist/
+const ASSET = /^\/assets\/[\w.-]+\.(js|css)$/
+const ASSET_TYPE: Record<string, string> = { js: 'text/javascript', css: 'text/css' }
+const DEV = process.argv.includes('--dev') // `npm run dev`: Vite serves the UI with hot reload
 // only answer to our own origin: blocks DNS-rebinding pages from reading your PR list
 const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`])
 
@@ -129,12 +134,12 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(body)
 }
 
-const snapshot = () => ({ me: state.me, lastPoll, lastError, items: view(state) })
+const snapshot = (): Snapshot => ({ me: state.me, lastPoll, lastError, items: view(state) })
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
   if (!ALLOWED_HOSTS.has(req.headers.host ?? '')) return send(res, 403, { error: 'forbidden host' })
   const route = `${req.method} ${req.url}`
-  if (route === 'GET /') return send(res, 200, readFileSync(PAGE, 'utf8'), 'text/html')
+  if (!req.url?.startsWith('/api/')) return serveUi(req, res)
   if (route === 'GET /api/state') return send(res, 200, snapshot())
   // JSON content type forces a CORS preflight we never answer, so other sites can't POST here
   if (req.method === 'POST' && req.headers['content-type'] !== 'application/json') {
@@ -163,9 +168,32 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   send(res, 404, { error: 'not found' })
 }
 
+function serveUi(req: IncomingMessage, res: ServerResponse) {
+  if (vite) return vite.middlewares(req, res)
+  if (req.method !== 'GET') return send(res, 404, { error: 'not found' })
+  const asset = req.url?.match(ASSET)
+  const file = asset ? `.${req.url}` : req.url === '/' ? 'index.html' : null
+  if (!file) return send(res, 404, { error: 'not found' })
+  try {
+    send(res, 200, readFileSync(new URL(file, DIST), 'utf8'), asset ? ASSET_TYPE[asset[1]!] : 'text/html')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+    send(res, 404, { error: asset ? 'not found' : 'UI not built: run `npm run build`' })
+  }
+}
+
 checkNotifier()
-createServer((req, res) => {
+const server = createServer((req, res) => {
   handle(req, res).catch(e => send(res, 500, { error: (e as Error).message }))
-}).listen(PORT, '127.0.0.1', () => console.log(`PR Watch on ${APP_URL}`))
+})
+// dev: Vite as middleware on this same server/port, HMR websocket included, so there is no proxy to configure
+const vite = DEV
+  ? await (await import('vite')).createServer({
+      configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+      server: { middlewareMode: true, hmr: { server } },
+      appType: 'spa',
+    })
+  : null
+server.listen(PORT, '127.0.0.1', () => console.log(`PR Watch on ${APP_URL}${DEV ? ' (dev, hot reload)' : ''}`))
 poll()
 setInterval(poll, POLL_MS)
